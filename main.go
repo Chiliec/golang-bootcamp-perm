@@ -4,11 +4,14 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
-	"github.com/Chiliec/golang-bootcamp-perm/models"
+	"github.com/pkg/errors"
 	"golang.org/x/net/html/charset"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	
+	"github.com/Chiliec/golang-bootcamp-perm/models"
 )
 
 const (
@@ -17,45 +20,58 @@ const (
 )
 
 var (
-	currency string
-	value    float64
+	inputtedCurrency string
+	inputtedValue    float64
 )
 
 func init() {
-	flag.StringVar(&currency, "currency", defaultCurrency, "3-letter currency symbol")
-	flag.Float64Var(&value, "value", defaultValue, "amount of money at that currency")
+	flag.StringVar(&inputtedCurrency, "currency", defaultCurrency, "3-letter currency symbol")
+	flag.Float64Var(&inputtedValue, "value", defaultValue, "amount of money at that currency")
 	flag.Parse()
 }
 
 func main() {
-	valCurs := getExchangeRates()
-	for _, valute := range valCurs.Valutes {
-		if valute.CharCode == currency {
-			valueStringWithoutComma := strings.Replace(valute.Value, ",", ".", -1)
+	finalString, err := getFinalString()
+	if err != nil {
+		finalString = "К сожалению, произошла ошибка: " + err.Error()
+	}
+	log.Println(finalString)
+}
+
+func getFinalString() (string, error) {
+	exchangeRates, err := getExchangeRates()
+	if err != nil || exchangeRates == nil {
+		return "Не получили курсы валют", err
+	}
+	for _, currency := range exchangeRates.Currencies {
+		if currency.CharCode == inputtedCurrency {
+			valueStringWithoutComma := strings.Replace(currency.Value, ",", ".", -1)
 			valueInFloat, err := strconv.ParseFloat(valueStringWithoutComma, 64)
-			checkErr(err)
-			valueInRubles := valueInFloat * value
-			fmt.Printf("За %f %s сегодня дают %.2f рублей", value, valute.Name, valueInRubles)
-			return
+			if err != nil {
+				return "Не смогли распарсить курс", err
+			}
+			valueInRubles := valueInFloat * inputtedValue
+			return fmt.Sprintf("За %f %s сегодня дают %.2f рублей", inputtedValue, currency.Name, valueInRubles), nil
 		}
 	}
-	fmt.Println("Нет такой валюты или что-то пошло не так")
+	return "", errors.New("Нет такой валюты или что-то пошло не так")
 }
 
-func getExchangeRates() models.ValCurs {
+func getExchangeRates() (*models.ExchangeRates, error) {
 	resp, err := http.Get("http://www.cbr.ru/scripts/XML_daily.asp")
-	checkErr(err)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Body == nil {
+		return nil, errors.New("Пустое тело ответа!")
+	}
 	defer resp.Body.Close()
-	var valCurs models.ValCurs
+	var exchangeRates models.ExchangeRates
 	decoder := xml.NewDecoder(resp.Body)
 	decoder.CharsetReader = charset.NewReaderLabel
-	err = decoder.Decode(&valCurs)
-	checkErr(err)
-	return valCurs
-}
-
-func checkErr(err error) {
+	err = decoder.Decode(&exchangeRates)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
+	return &exchangeRates, nil
 }
